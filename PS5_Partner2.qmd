@@ -1,0 +1,204 @@
+---
+title: "PS5"
+format: html
+---
+
+```{python}
+!pip install lxml
+!pip install beautifulsoup4 pandas
+!pip install requests
+```
+
+
+```{python}
+### 1. Scraping (PARTNER 1)
+
+import requests
+from bs4 import BeautifulSoup
+import pandas as pd
+
+# URL of the HHS OIG Enforcement Actions page
+url = "https://oig.hhs.gov/fraud/enforcement/"
+
+# Send a GET request to fetch the page content
+response = requests.get(url)
+soup = BeautifulSoup(response.text, 'lxml')
+
+# Lists to hold data
+titles, dates, categories, links = [], [], [], []
+
+# Find enforcement action entries
+for item in soup.select('h2.usa-card__heading'):
+    # Extract title
+    title = item.select_one('a').text.strip()
+    
+    # Extract and complete the link
+    link = "https://oig.hhs.gov" + item.select_one('a')['href']
+# Extract category
+    category = item.find_next('li', class_='display-inline-block usa-tag text-no-lowercase text-base-darkest bg-base-lightest margin-right-1').text.strip()
+    
+    # Extract date
+    date = item.find_next('span', class_='text-base-dark padding-right-105').text.strip()
+    
+    # Append to lists
+    titles.append(title)
+    links.append(link)
+    categories.append(category)
+    dates.append(date)
+
+# Create a DataFrame
+df = pd.DataFrame({
+    "Title": titles,
+    "Date": dates,
+    "Category": categories,
+    "Link": links
+})
+
+# Show the first few rows
+print(df.head())
+```
+
+```{python}
+### 2. Crawling (PARTNER 1)
+
+# Initialize an empty list for agency names
+agencies = []
+
+# Loop through each enforcement action link in the dataframe
+for link in df['Link']:
+    response = requests.get(link)  # Send request to the enforcement page
+    soup = BeautifulSoup(response.text, 'lxml')  # Parse the page
+    
+    # Find the <h2> tag containing "Action Details"
+    h2_tag = soup.find('h2', class_='font-heading-lg')
+    
+    # Initialize agency_name with a default value
+    agency_name = "No agency section found"
+    
+    # If <h2> exists, get the following <ul> containing the agency data
+    if h2_tag:
+        ul_tag = h2_tag.find_next('ul', class_='usa-list--unstyled')
+        
+        if ul_tag:
+            li_tags = ul_tag.find_all('li')
+            
+            # Check if there are at least two <li> tags
+            if len(li_tags) >= 2:
+                # Only split if "Agency:" is in the text to avoid index errors
+                if "Agency:" in li_tags[1].text:
+                    agency_name = li_tags[1].text.split('Agency:')[1].strip()
+                else:
+                    agency_name = "Agency name not found"
+            else:
+                agency_name = "No agency information available"
+    
+    # Append the agency name to the list
+    agencies.append(agency_name)
+
+# Add the agency names to the dataframe
+df['Agency'] = agencies
+
+# Print the updated dataframe
+print(df.head())
+
+
+```
+
+
+
+## Step 2: Making the scraper dynamic
+
+### 1. Turning the scraper into a function 
+
+## a. Pseudo-Code (PARTNER 2)
+
+1. *Validate Year*:  
+   If year < 2013, print a reminder and exit.
+
+2. *Set Base URL*:  
+   Define the URL 'https://oig.hhs.gov/fraud/enforcement/'.
+
+3. *Loop Through Pages*:  
+   - Start at page = 1.
+   - Continue until no more enforcement actions are found.
+
+4. *Scrape Data*:  
+   - Extract title, date, category, and link.
+   - Visit each link to extract the agency.
+
+5. *Rate Limiting*:  
+   After each page, time.sleep(1).
+
+6. *Store & Save*:  
+   Append data, convert to DataFrame, and save as CSV.
+
+7. *Return DataFrame*.
+
+
+
+```{python}
+
+## b. Create Dynamic Scraper (PARTNER 2)
+import requests
+from bs4 import BeautifulSoup
+import pandas as pd
+import time
+
+def scrape_enforcement_actions(year, month):
+    if year < 2013:
+        print("Please restrict the year to >= 2013.")
+        return
+    
+    base_url = "https://oig.hhs.gov/fraud/enforcement/"
+    page = 1
+    all_data = []
+    max_pages = 5  # Limit pages for testing
+    
+    while page <= max_pages:
+        print(f"Scraping page {page}...")
+        url = f"{base_url}?page={page}"
+        response = requests.get(url)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        actions = soup.select('.usa-card__heading')
+        if not actions:
+            print("No more actions found. Ending scrape.")
+            break
+        
+        for action in actions:
+            title = action.get_text(strip=True)
+            link = action.find('a')['href']
+            date = action.find_next('span', class_='text-base-dark').get_text(strip=True)
+            category = "Criminal and Civil Actions"  
+            print(f"Scraping action: {title}")
+            
+            agency = scrape_agency(link)
+            all_data.append([title, date, category, link, agency])
+        
+        page += 1
+        time.sleep(1)
+    
+    # Create DataFrame after loop finishes
+    df = pd.DataFrame(all_data, columns=["Title", "Date", "Category", "Link", "Agency"])
+    filename = f"enforcement_actions_{year}_{month}.csv"
+    df.to_csv(filename, index=False)
+    print(f"Data saved to {filename}")
+    return df
+
+def scrape_agency(link):
+    full_url = f"https://oig.hhs.gov{link}"
+    try:
+        response = requests.get(full_url)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        agency_element = soup.select_one('li:contains("Agency:")')
+        if agency_element:
+            return agency_element.get_text(strip=True).replace("Agency:", "").strip()
+    except Exception as e:
+        print(f"Error fetching agency: {e}")
+    return "Not Available"
+
+# Testing with limited pages
+df = scrape_enforcement_actions(2023, 1)
+print(df.head())
+
+```
